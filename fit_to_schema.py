@@ -11,10 +11,6 @@ Lat/Long stored as degrees.
 
 Dependencies:
     pip install fitparse pandas
-
-Run:
-    python fit_to_df_v2.py
-    python fit_to_df_v2.py --input "X:\\TEST\\ACTIVITY" --csv --out "X:\\TEST\\EXPORTS" --force
 """
 
 from __future__ import annotations

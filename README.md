@@ -1,8 +1,8 @@
 # Runners-Dashboard
 Convert a series of selected .fit file running activities to analyze performance trends over time. All processed on your local machine to no longer rely on web portals or subscription services to analyze training data.
 
-##Schema
-###1. Activity Table (df_activity)
+## Schema
+### 1. Activity Table (df_activity)
 One row per activity (.fit file)
 Required Fields:
 activity_id – STR – Deterministic unique activity identifier (join key)
@@ -18,7 +18,7 @@ Notes:
 Primary authority for activity date/time.
 Distance, HR, and cadence act as fallbacks if record data is missing.
 Typically one row per .fit file.
-###2. Records Table (df_records)
+### 2. Records Table (df_records)
 Many rows per activity (time-series records)
 Required Fields:
 activity_id – STR – Foreign key to df_activity.activity_id
@@ -33,7 +33,7 @@ Notes:
 Primary source for statistical calculations (mean/max HR & cadence).
 Drives elevation change computation.
 enhanced_altitude_m is preferred when available.
-###3. Skipped Table (df_skipped)
+### 3. Skipped Table (df_skipped)
 One row per skipped or failed .fit file
 Fields:
 source_file – STR – File that failed parsing
@@ -42,7 +42,7 @@ details – STR – Optional diagnostic detail
 Notes:
 Informational only.
 Not used in analysis.
-###4. Activity Summary Table (df_summary)
+### 4. Activity Summary Table (df_summary)
 One row per activity (final output)
 Fields:
 date_yyyymmdd – STR – Activity date (YYYYMMDD, UTC)
@@ -53,7 +53,7 @@ max_hr_bpm – INT | NULL – Maximum heart rate (bpm)
 mean_cadence_spm – FLOAT | NULL – Mean cadence (steps/min)
 max_cadence_spm – INT | NULL – Maximum cadence (steps/min)
 elevation_change – FLOAT | NULL – |total_ascent − total_descent| (feet)
-###Derivation Rules:
+### Derivation Rules:
 Distance: df_activity.total_distance_m → fallback to max(df_records.distance_m)
 HR/Cadence: record-level stats → fallback to activity-level fields
 Elevation: successive altitude deltas, meters → feet

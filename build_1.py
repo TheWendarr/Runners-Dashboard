@@ -6,7 +6,7 @@ This script wires together two stages:
 1) fit_to_schema: discovers and parses .fit files into standardized schema DataFrames
    (activity-level + record-level tables, plus a skipped/errors table).
 2) schema_to_analysis: aggregates those schema tables into one summary row per activity
-   (date/time, distance, HR stats, cadence stats, elevation-change metric).
+   (date/time, distance, pace, efficiency, HR stats, cadence stats, elevation-change metric).
 
 Usage:
 Run with CLI flags to specify an input file/folder and optional CSV exports, or omit
@@ -14,7 +14,6 @@ Run with CLI flags to specify an input file/folder and optional CSV exports, or 
 
 Produces a summary DataFrame in-memory and optionally writes it to CSV via --summary-out
 """
-
 
 from __future__ import annotations
 
@@ -197,4 +196,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    """
+    Sample command to run:
+    (.venv) <C:\Runners-Dashboard> python .\build_1.py `
+        --input "C:\TEST\ACTIVITIES" `
+        --csv-out "C:\TEST\EXPORTS" `
+        --summary-out "C:\TEST\EXPORTS\runs_summary.csv" `
+        --force
+    """
     raise SystemExit(main())

@@ -7,6 +7,7 @@ Inputs:
         start_time (ISO datetime; parsed as UTC when possible)
     Optional columns (used as fallbacks when record-level data is missing):
         total_distance_m
+        total_timer_time_s, total_elapsed_time_s
         avg_heart_rate_bpm, max_heart_rate_bpm
         avg_cadence_raw, max_cadence_raw
 - df_records (pandas.DataFrame)
@@ -26,6 +27,8 @@ Outputs:
         date_yyyymmdd (YYYYMMDD)
         time_hhmmss (HH:MM:SS, UTC by default)
         distance_miles
+        pace_mmss (MM:SS, minutes per mile)
+        efficiency (0.8547 * pace_decimal_minutes * (mean_hr_bpm / 100))
         mean_hr_bpm, max_hr_bpm
         mean_cadence_spm, max_cadence_spm
         elevation_change (ft): |(total_ascent - total_descent)|
@@ -34,7 +37,6 @@ Outputs:
 - Convenience constructor FitDatasetAnalyzer.from_csvs(activity_csv, records_csv)
     Loads schema CSV exports (e.g., runs_activity.csv and runs_records.csv) and returns a ready analyzer
 """
-
 
 from __future__ import annotations
 
@@ -56,6 +58,8 @@ class ActivitySummary:
     date_yyyymmdd: str              # YYYYMMDD
     time_hhmmss: str                # HH:MM:SS (UTC by default)
     distance_miles: float
+    pace_mmss: Optional[str]        # MM:SS (minutes per mile)
+    efficiency: Optional[float]     # lower is better
     mean_hr_bpm: Optional[float]
     max_hr_bpm: Optional[int]
     mean_cadence_spm: Optional[float]
@@ -101,6 +105,58 @@ class FitDatasetAnalyzer:
             return None
         try:
             return float(m) * 3.280839895
+        except Exception:
+            return None
+        
+    @staticmethod
+    def _format_mmss(total_seconds: Optional[float]) -> Optional[str]:
+        if total_seconds is None:
+            return None
+        try:
+            s = int(round(float(total_seconds)))
+        except Exception:
+            return None
+        if s < 0:
+            s = 0
+
+        minutes = s // 60          # can exceed 59, that's fine for pace
+        seconds = s % 60
+        return f"{minutes:02d}:{seconds:02d}"
+
+    @staticmethod
+    def _compute_pace_mmss(time_seconds: Optional[float], distance_miles: float) -> Optional[str]:
+        if time_seconds is None:
+            return None
+        if distance_miles <= 0:
+            return None
+        pace_sec_per_mile = float(time_seconds) / float(distance_miles)
+        return FitDatasetAnalyzer._format_mmss(pace_sec_per_mile)
+    
+    @staticmethod
+    def _pace_seconds_per_mile(time_seconds: Optional[float], distance_miles: float) -> Optional[float]:
+        if time_seconds is None:
+            return None
+        if distance_miles <= 0:
+            return None
+        try:
+            return float(time_seconds) / float(distance_miles)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _compute_efficiency(pace_seconds_per_mile: Optional[float], mean_hr_bpm: Optional[float]) -> Optional[float]:
+        """
+        Efficiency = 0.8547 x Pace as Decimal Minutes x (Mean HR / 100)
+        This is a custom efficiency formula used to gauge ability to perform... efficiently
+        The lower the number, the better. 10 is the ability to run a 6 minute mile with 195bpm average HR
+        """
+        if pace_seconds_per_mile is None:
+            return None
+        if mean_hr_bpm is None:
+            return None
+        try:
+            pace_decimal_minutes = float(pace_seconds_per_mile) / 60.0
+            return 0.8547 * pace_decimal_minutes * (float(mean_hr_bpm) / 100.0)
         except Exception:
             return None
 
@@ -174,6 +230,15 @@ class FitDatasetAnalyzer:
 
             distance_miles = self._meters_to_miles(dist_m) or 0.0
 
+            # Pace (minutes per mile): prefer timer time; fallback to elapsed time
+            time_s = None
+            if pd.notna(arow.get("total_timer_time_s")):
+                time_s = float(arow.get("total_timer_time_s"))
+            elif pd.notna(arow.get("total_elapsed_time_s")):
+                time_s = float(arow.get("total_elapsed_time_s"))
+
+            pace_mmss = self._compute_pace_mmss(time_s, distance_miles)
+
             # Records slice for this activity
             r = grouped.get_group(activity_id) if activity_id in grouped else pd.DataFrame()
 
@@ -205,6 +270,11 @@ class FitDatasetAnalyzer:
                 if pd.notna(arow.get("max_cadence_raw")):
                     max_cad = int(arow.get("max_cadence_raw"))
 
+            # Efficiency: Derived from HR and Pace calculated with constants
+            pace_sec_per_mile = self._pace_seconds_per_mile(time_s, distance_miles)
+            pace_mmss = self._format_mmss(pace_sec_per_mile) if pace_sec_per_mile is not None else None
+            efficiency = self._compute_efficiency(pace_sec_per_mile, mean_hr)
+
             # Elevation Change:
             elevation_change_ft = None
             if not r.empty:
@@ -218,9 +288,11 @@ class FitDatasetAnalyzer:
                     date_yyyymmdd=date_yyyymmdd,
                     time_hhmmss=time_hhmmss,
                     distance_miles=round(distance_miles, 3),
+                    pace_mmss=pace_mmss,
+                    efficiency=None if efficiency is None else round(efficiency, 3),
                     mean_hr_bpm=None if mean_hr is None else round(mean_hr, 1),
                     max_hr_bpm=max_hr,
-                    mean_cadence_spm=None if mean_cad is None else (round(mean_cad, 1)*2),
+                    mean_cadence_spm=None if mean_cad is None else (round(mean_cad, 1) * 2),
                     max_cadence_spm=max_cad * 2,
                     elevation_change=None if elevation_change_ft is None else round(elevation_change_ft, 1),
                 )
@@ -240,6 +312,8 @@ class FitDatasetAnalyzer:
                 "date_yyyymmdd",
                 "time_hhmmss",
                 "distance_miles",
+                "pace_mmss",
+                "efficiency",
                 "mean_hr_bpm",
                 "max_hr_bpm",
                 "mean_cadence_spm",

@@ -1,10 +1,4 @@
 """
-FIT -> FeatureBundle (schema tables + per-activity summary + feature tables)
-
-Purpose
-    This script consolidates the project’s first pipeline segment into a single, portable
-    module that can be executed as a CLI tool or imported as a library stage.
-
 Pipeline
     1) Parse .fit files into a unified schema:
         - df_activity: one row per running activity

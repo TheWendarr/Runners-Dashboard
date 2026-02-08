@@ -1,4 +1,10 @@
 """
+FeatureBundle -> GraphBundle (graph-ready JSON specifications)
+
+Purpose
+    Stage B tool: converts feature tables produced by fit_to_feature.py into
+    renderer-agnostic, JSON-serializable graph specifications ("GraphSpecs").
+
 Inputs (in-memory)
     - df_records_feat (pandas.DataFrame)
         Required columns:
@@ -10,13 +16,21 @@ Inputs (in-memory)
             elevation_ft (float/int)        elevation in feet (optional; included if present)
 
     - df_summary (pandas.DataFrame)
-        One row per activity with activity-level metrics (mean/max pace, HR, cadence, elevation change)
-        Used for daily/weekly trend charts.
+        One row per activity with activity-level metrics (mean/max pace, HR, cadence,
+        elevation change, and efficiency). Used for daily/weekly trend charts.
 
 Outputs (in-memory)
     - GraphBundle
         activity_graphs: activity_id -> GraphSpec (dict)
-        summary_graphs:  graph_id -> GraphSpec (dict), includes "daily" and "weekly"
+        summary_graphs:  graph_id -> GraphSpec (dict)
+
+        Summary graphs are split into:
+            daily_hr:        mean/max HR
+            daily_cadence:   mean/max cadence
+            daily_efficiency:efficiency
+            weekly_hr:       mean/max HR (weekly agg)
+            weekly_cadence:  mean/max cadence (weekly agg)
+            weekly_efficiency:efficiency (weekly agg)
 
 Optional disk outputs (debug / validation chokepoints only)
     This module can be executed as a CLI tool to load a FeatureBundle export directory
@@ -24,7 +38,7 @@ Optional disk outputs (debug / validation chokepoints only)
     specified output directory.
 
 Usage
-    python feature_to_graph.py --input <feature_bundle_dir> --out <graphs_dir> [--force]
+    python feature_to_graph.py --input <feature_bundle_dir> --out <graph_bundle_dir> [--force]
 
 Notes
     - The pipeline is in-memory by default; JSON exports are optional and intended only
@@ -35,13 +49,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import math
 import pandas as pd
 
 
@@ -50,15 +63,18 @@ HR_COL = "heart_rate_bpm"
 
 # From feature tables
 ACTIVITY_X_COL = "t_s"
-ACTIVITY_SERIES_DEFAULT = {
+ACTIVITY_SERIES_DEFAULT: Dict[str, Dict[str, str]] = {
     "pace_s_per_mile": {"label": "Pace", "unit": "s/mi"},
     HR_COL: {"label": "Heart Rate", "unit": "bpm"},
     "cadence_spm": {"label": "Cadence", "unit": "spm"},
     "elevation_ft": {"label": "Elevation", "unit": "ft"},
 }
 
+# Summary time axis candidates (FeatureBundle df_summary)
 SUMMARY_DATE_COLS = ["start_time_utc", "start_time", "date_yyyymmdd"]
-SUMMARY_SERIES_ALIASES = {
+
+# Canonical summary metrics and their possible column aliases in df_summary
+SUMMARY_SERIES_ALIASES: Dict[str, List[str]] = {
     # pace
     "pace_mean_s_per_mile": ["pace_mean_s_per_mile", "mean_pace_s_per_mile", "pace_mean"],
     "pace_max_s_per_mile": ["pace_max_s_per_mile", "max_pace_s_per_mile", "pace_max"],
@@ -70,6 +86,8 @@ SUMMARY_SERIES_ALIASES = {
     "cadence_max_spm": ["cadence_max_spm", "max_cadence_spm", "max_cadence"],
     # elevation change
     "elev_change_ft": ["elev_change_ft", "elevation_change_ft", "elevation_change", "elev_change"],
+    # efficiency
+    "efficiency": ["efficiency", "efficiency_level", "eff", "eff_level"],
 }
 
 
@@ -77,8 +95,9 @@ SUMMARY_SERIES_ALIASES = {
 @dataclass(frozen=True)
 class GraphBundle:
     """In-memory graph outputs (JSON-serializable) for visualization stages."""
-    activity_graphs: Dict[str, Dict[str, Any]]   # activity_id -> GraphSpec
-    summary_graphs: Dict[str, Dict[str, Any]]    # graph_id -> GraphSpec
+
+    activity_graphs: Dict[str, Dict[str, Any]]  # activity_id -> GraphSpec
+    summary_graphs: Dict[str, Dict[str, Any]]  # graph_id -> GraphSpec
 
 
 # Small helpers
@@ -135,7 +154,9 @@ def _iso_week_key(dt: pd.Timestamp) -> str:
     return f"{int(iso.year):04d}-W{int(iso.week):02d}"
 
 
+# -----------------------------
 # GraphSpec builders
+# -----------------------------
 def make_graph_spec(
     graph_id: str,
     category: str,
@@ -147,7 +168,7 @@ def make_graph_spec(
     meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Create a JSON-serializable graph spec dict
+    Create a JSON-serializable graph spec dict.
     """
     return {
         "graph_id": graph_id,
@@ -159,7 +180,9 @@ def make_graph_spec(
     }
 
 
+# -----------------------------
 # Activity graphs (record-level)
+# -----------------------------
 def make_activity_graph(
     df_records_feat: pd.DataFrame,
     activity_id: str,
@@ -171,35 +194,23 @@ def make_activity_graph(
 ) -> Dict[str, Any]:
     """
     Build a record-level GraphSpec for a single activity_id.
-    Required columns (minimum)
-        - activity_id
-        - t_s
-        - pace_s_per_mile
-        - heart_rate_bpm
-        - cadence_spm
-        - elevation_ft
-    Returns
-        GraphSpec dict (JSON-serializable)
     """
     require_columns(df_records_feat, ["activity_id", x_col], context="activity graph")
     df_one = df_records_feat[df_records_feat["activity_id"] == activity_id].copy()
     if df_one.empty:
         raise ValueError(f"No records for activity_id={activity_id}")
 
-    # Sort by elapsed time
     df_one[x_col] = pd.to_numeric(df_one[x_col], errors="coerce")
     df_one = df_one.sort_values(by=x_col, kind="mergesort")
 
     series_map = series_map or ACTIVITY_SERIES_DEFAULT
-    # Only include series that actually exist in the DataFrame
+
     series_specs: List[Dict[str, Any]] = []
     for col, info in series_map.items():
         if col not in df_one.columns:
             continue
         vals = _series_to_list(_coerce_numeric_series(df_one, col))
-        series_specs.append(
-            {"name": info["label"], "unit": info["unit"], "values": vals, "source_col": col}
-        )
+        series_specs.append({"name": info["label"], "unit": info["unit"], "values": vals, "source_col": col})
 
     if title is None:
         title = f"Activity {activity_id}"
@@ -214,11 +225,7 @@ def make_activity_graph(
         x_unit="s",
         x_values=x_vals,
         series=series_specs,
-        meta={
-            "activity_id": activity_id,
-            "created_utc": _utc_now_iso(),
-            "x_col": x_col,
-        },
+        meta={"activity_id": activity_id, "created_utc": _utc_now_iso(), "x_col": x_col},
     )
 
 
@@ -228,16 +235,15 @@ def make_activity_graphs(
     *,
     graph_id: str = "series",
 ) -> Dict[str, Dict[str, Any]]:
-    """
-    Build activity graphs for many activity_ids. Returns mapping activity_id -> GraphSpec
-    """
     out: Dict[str, Dict[str, Any]] = {}
     for aid in activity_ids:
         out[aid] = make_activity_graph(df_records_feat, aid, graph_id=graph_id)
     return out
 
 
+# -----------------------------
 # Summary graphs (activity-level)
+# -----------------------------
 def _get_summary_time_axis(df_summary: pd.DataFrame) -> Tuple[pd.Series, str, str]:
     """
     Return (datetime_series_utc, x_label, x_unit)
@@ -255,55 +261,43 @@ def _get_summary_time_axis(df_summary: pd.DataFrame) -> Tuple[pd.Series, str, st
 
 
 def _resolve_summary_col(df_summary: pd.DataFrame, canonical: str) -> Optional[str]:
-    candidates = SUMMARY_SERIES_ALIASES.get(canonical, [])
-    return _pick_first_existing(df_summary, candidates)
+    return _pick_first_existing(df_summary, SUMMARY_SERIES_ALIASES.get(canonical, []))
 
 
-def make_summary_daily_graph(
+def _make_summary_daily_subset(
     df_summary: pd.DataFrame,
     *,
-    graph_id: str = "summary_daily",
-    title: str = "Summary Metrics (Daily)",
+    graph_id: str,
+    title: str,
+    canonicals: Sequence[str],
 ) -> Dict[str, Any]:
-    """
-    Build a daily (per-activity point) summary GraphSpec
-    """
     dt, x_label, x_unit = _get_summary_time_axis(df_summary)
     tmp = df_summary.copy()
     tmp["_dt"] = dt
     tmp = tmp.sort_values("_dt", kind="mergesort")
 
+    # store as date string; renderer can treat as categorical/datetime
     x_vals = [safe_jsonable_scalar(v) for v in tmp["_dt"].dt.strftime("%Y-%m-%d").tolist()]
 
-    canonical_order = [
-        "pace_mean_s_per_mile",
-        "pace_max_s_per_mile",
-        "hr_mean_bpm",
-        "hr_max_bpm",
-        "cadence_mean_spm",
-        "cadence_max_spm",
-        "elev_change_ft",
-    ]
-
     series_specs: List[Dict[str, Any]] = []
-    for canonical in canonical_order:
+    for canonical in canonicals:
         col = _resolve_summary_col(tmp, canonical)
         if col is None:
             continue
         vals = _series_to_list(_coerce_numeric_series(tmp, col))
 
-        if "pace_" in canonical:
-            name = "Mean Pace" if "mean" in canonical else "Max Pace"
-            unit = "s/mi"
-        elif "hr_" in canonical:
-            name = "Mean HR" if "mean" in canonical else "Max HR"
-            unit = "bpm"
-        elif "cadence_" in canonical:
-            name = "Mean Cadence" if "mean" in canonical else "Max Cadence"
-            unit = "spm"
+        if canonical == "hr_mean_bpm":
+            name, unit = "Mean HR", "bpm"
+        elif canonical == "hr_max_bpm":
+            name, unit = "Max HR", "bpm"
+        elif canonical == "cadence_mean_spm":
+            name, unit = "Mean Cadence", "spm"
+        elif canonical == "cadence_max_spm":
+            name, unit = "Max Cadence", "spm"
+        elif canonical == "efficiency":
+            name, unit = "Efficiency", "level"
         else:
-            name = "Elevation Change"
-            unit = "ft"
+            name, unit = canonical, ""
 
         series_specs.append({"name": name, "unit": unit, "values": vals, "source_col": col})
 
@@ -315,23 +309,18 @@ def make_summary_daily_graph(
         x_unit=x_unit,
         x_values=x_vals,
         series=series_specs,
-        meta={
-            "created_utc": _utc_now_iso(),
-            "time_grain": "daily",
-        },
+        meta={"created_utc": _utc_now_iso(), "time_grain": "daily", "subset": list(canonicals)},
     )
 
 
-def make_summary_weekly_graph(
+def _make_summary_weekly_subset(
     df_summary: pd.DataFrame,
     *,
-    graph_id: str = "summary_weekly",
-    title: str = "Summary Metrics (Weekly)",
+    graph_id: str,
+    title: str,
+    canonicals: Sequence[str],
     week_mode: str = "iso",
 ) -> Dict[str, Any]:
-    """
-    Build a weekly-aggregated summary GraphSpec
-    """
     dt, _, _ = _get_summary_time_axis(df_summary)
     tmp = df_summary.copy()
     tmp["_dt"] = dt
@@ -342,18 +331,8 @@ def make_summary_weekly_graph(
     tmp["_week"] = tmp["_dt"].apply(lambda x: _iso_week_key(x) if pd.notna(x) else None)
     tmp = tmp[tmp["_week"].notna()].copy()
 
-    canonical_order = [
-        "pace_mean_s_per_mile",
-        "pace_max_s_per_mile",
-        "hr_mean_bpm",
-        "hr_max_bpm",
-        "cadence_mean_spm",
-        "cadence_max_spm",
-        "elev_change_ft",
-    ]
-
     resolved: List[Tuple[str, str]] = []
-    for canonical in canonical_order:
+    for canonical in canonicals:
         col = _resolve_summary_col(tmp, canonical)
         if col is not None:
             resolved.append((canonical, col))
@@ -368,12 +347,18 @@ def make_summary_weekly_graph(
             x_unit="week",
             x_values=weeks,
             series=[],
-            meta={"created_utc": _utc_now_iso(), "time_grain": "weekly", "week_mode": week_mode},
+            meta={"created_utc": _utc_now_iso(), "time_grain": "weekly", "week_mode": week_mode, "subset": list(canonicals)},
         )
 
+    # Aggregation rules:
+    # - mean-series: mean
+    # - max-series:  max
+    # - efficiency:  mean
     agg: Dict[str, Any] = {}
     for canonical, col in resolved:
-        if "mean" in canonical:
+        if canonical == "efficiency":
+            agg[col] = "mean"
+        elif "mean" in canonical:
             agg[col] = "mean"
         elif "max" in canonical:
             agg[col] = "max"
@@ -386,18 +371,18 @@ def make_summary_weekly_graph(
     for canonical, col in resolved:
         vals = _series_to_list(_coerce_numeric_series(grouped, col))
 
-        if "pace_" in canonical:
-            name = "Mean Pace" if "mean" in canonical else "Max Pace"
-            unit = "s/mi"
-        elif "hr_" in canonical:
-            name = "Mean HR" if "mean" in canonical else "Max HR"
-            unit = "bpm"
-        elif "cadence_" in canonical:
-            name = "Mean Cadence" if "mean" in canonical else "Max Cadence"
-            unit = "spm"
+        if canonical == "hr_mean_bpm":
+            name, unit = "Mean HR", "bpm"
+        elif canonical == "hr_max_bpm":
+            name, unit = "Max HR", "bpm"
+        elif canonical == "cadence_mean_spm":
+            name, unit = "Mean Cadence", "spm"
+        elif canonical == "cadence_max_spm":
+            name, unit = "Max Cadence", "spm"
+        elif canonical == "efficiency":
+            name, unit = "Efficiency", "level"
         else:
-            name = "Elevation Change"
-            unit = "ft"
+            name, unit = canonical, ""
 
         series_specs.append({"name": name, "unit": unit, "values": vals, "source_col": col})
 
@@ -413,12 +398,58 @@ def make_summary_weekly_graph(
             "created_utc": _utc_now_iso(),
             "time_grain": "weekly",
             "week_mode": week_mode,
+            "subset": list(canonicals),
             "transforms": [{"type": "groupby_week", "mode": week_mode}],
         },
     )
 
 
+# Public split summary graphs
+def make_summary_daily_hr_graph(df_summary: pd.DataFrame) -> Dict[str, Any]:
+    return _make_summary_daily_subset(
+        df_summary, graph_id="daily_hr", title="Heart Rate (Daily)", canonicals=("hr_mean_bpm", "hr_max_bpm")
+    )
+
+
+def make_summary_daily_cadence_graph(df_summary: pd.DataFrame) -> Dict[str, Any]:
+    return _make_summary_daily_subset(
+        df_summary,
+        graph_id="daily_cadence",
+        title="Cadence (Daily)",
+        canonicals=("cadence_mean_spm", "cadence_max_spm"),
+    )
+
+
+def make_summary_daily_efficiency_graph(df_summary: pd.DataFrame) -> Dict[str, Any]:
+    return _make_summary_daily_subset(
+        df_summary, graph_id="daily_efficiency", title="Efficiency (Daily)", canonicals=("efficiency",)
+    )
+
+
+def make_summary_weekly_hr_graph(df_summary: pd.DataFrame) -> Dict[str, Any]:
+    return _make_summary_weekly_subset(
+        df_summary, graph_id="weekly_hr", title="Heart Rate (Weekly)", canonicals=("hr_mean_bpm", "hr_max_bpm")
+    )
+
+
+def make_summary_weekly_cadence_graph(df_summary: pd.DataFrame) -> Dict[str, Any]:
+    return _make_summary_weekly_subset(
+        df_summary,
+        graph_id="weekly_cadence",
+        title="Cadence (Weekly)",
+        canonicals=("cadence_mean_spm", "cadence_max_spm"),
+    )
+
+
+def make_summary_weekly_efficiency_graph(df_summary: pd.DataFrame) -> Dict[str, Any]:
+    return _make_summary_weekly_subset(
+        df_summary, graph_id="weekly_efficiency", title="Efficiency (Weekly)", canonicals=("efficiency",)
+    )
+
+
+# -----------------------------
 # In-memory stage runner
+# -----------------------------
 def run_build_2(
     *,
     df_records_feat: pd.DataFrame,
@@ -427,12 +458,6 @@ def run_build_2(
 ) -> GraphBundle:
     """
     Run the graph generation stage in-memory.
-    Inputs
-        df_records_feat: record-level feature table from earlier stage
-        df_summary:      per-activity summary table from earlier stage
-        activity_ids:    optional subset; if omitted, uses all activity_ids present in df_summary
-    Output
-        GraphBundle (activity_graphs + summary_graphs), JSON-serializable dicts.
     """
     require_columns(df_records_feat, ["activity_id", ACTIVITY_X_COL], context="df_records_feat")
     require_columns(df_records_feat, [HR_COL], context="df_records_feat")
@@ -443,15 +468,32 @@ def run_build_2(
 
     activity_graphs = make_activity_graphs(df_records_feat, activity_ids)
 
-    summary_graphs = {
-        "daily": make_summary_daily_graph(df_summary),
-        "weekly": make_summary_weekly_graph(df_summary),
+    summary_graphs: Dict[str, Dict[str, Any]] = {
+        "daily_hr": make_summary_daily_hr_graph(df_summary),
+        "daily_cadence": make_summary_daily_cadence_graph(df_summary),
+        "daily_efficiency": make_summary_daily_efficiency_graph(df_summary),
+        "weekly_hr": make_summary_weekly_hr_graph(df_summary),
+        "weekly_cadence": make_summary_weekly_cadence_graph(df_summary),
+        "weekly_efficiency": make_summary_weekly_efficiency_graph(df_summary),
     }
 
     return GraphBundle(activity_graphs=activity_graphs, summary_graphs=summary_graphs)
 
 
+def run_graph_stage(
+    df_records_feat: pd.DataFrame,
+    df_summary: pd.DataFrame,
+    activity_ids: Optional[Sequence[str]] = None,
+) -> GraphBundle:
+    """
+    Stage B runner (preferred name): FeatureBundle -> GraphBundle.
+    """
+    return run_build_2(df_records_feat=df_records_feat, df_summary=df_summary, activity_ids=activity_ids)
+
+
+# -----------------------------------------------------------------------------
 # Optional disk I/O (debug / validation chokepoints)
+# -----------------------------------------------------------------------------
 def _read_manifest(in_dir: Path) -> Optional[dict]:
     p = in_dir / "feature_bundle_manifest.json"
     if p.exists():
@@ -479,11 +521,7 @@ def _load_table_from_bundle_dir(in_dir: Path, table_name: str) -> pd.DataFrame:
         if csv_path:
             candidates.append(Path(csv_path))
 
-    # Fallbacks if manifest missing / incomplete
-    candidates.extend([
-        in_dir / f"{table_name}.parquet",
-        in_dir / f"{table_name}.csv",
-    ])
+    candidates.extend([in_dir / f"{table_name}.parquet", in_dir / f"{table_name}.csv"])
 
     for p in candidates:
         if p.exists():
@@ -491,9 +529,8 @@ def _load_table_from_bundle_dir(in_dir: Path, table_name: str) -> pd.DataFrame:
                 return pd.read_parquet(p)
             if p.suffix.lower() == ".csv":
                 return pd.read_csv(p)
-    raise FileNotFoundError(
-        f"Could not find table '{table_name}' in bundle directory: {in_dir}"
-    )
+
+    raise FileNotFoundError(f"Could not find table '{table_name}' in bundle directory: {in_dir}")
 
 
 def read_feature_bundle_minimum(in_dir: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -521,8 +558,12 @@ def write_graph_bundle(out_dir: Path, bundle: GraphBundle, force: bool) -> None:
             graph_bundle_manifest.json
             graph_bundle.json
             activity_graphs/<activity_id>.json
-            summary_graphs/daily.json
-            summary_graphs/weekly.json
+            summary_graphs/daily_hr.json
+            summary_graphs/daily_cadence.json
+            summary_graphs/daily_efficiency.json
+            summary_graphs/weekly_hr.json
+            summary_graphs/weekly_cadence.json
+            summary_graphs/weekly_efficiency.json
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     act_dir = out_dir / "activity_graphs"
@@ -530,7 +571,6 @@ def write_graph_bundle(out_dir: Path, bundle: GraphBundle, force: bool) -> None:
     act_dir.mkdir(parents=True, exist_ok=True)
     sum_dir.mkdir(parents=True, exist_ok=True)
 
-    # Individual graphs
     written_activity: Dict[str, str] = {}
     for activity_id, spec in (bundle.activity_graphs or {}).items():
         p = act_dir / f"{activity_id}.json"
@@ -545,65 +585,29 @@ def write_graph_bundle(out_dir: Path, bundle: GraphBundle, force: bool) -> None:
         p.write_text(json.dumps(spec, indent=2), encoding="utf-8")
         written_summary[str(graph_id)] = str(p)
 
-    # Combined file (convenient for inspection / future site assembly)
-    combined = {
-        "created_utc": _utc_now_iso(),
-        "activity_graphs": bundle.activity_graphs,
-        "summary_graphs": bundle.summary_graphs,
-    }
+    combined = {"created_utc": _utc_now_iso(), "activity_graphs": bundle.activity_graphs, "summary_graphs": bundle.summary_graphs}
     combined_path = out_dir / "graph_bundle.json"
     _ensure_writable(combined_path, force)
     combined_path.write_text(json.dumps(combined, indent=2), encoding="utf-8")
 
     manifest = {
         "created_utc": _utc_now_iso(),
-        "counts": {
-            "activity_graphs": int(len(bundle.activity_graphs or {})),
-            "summary_graphs": int(len(bundle.summary_graphs or {})),
-        },
-        "files": {
-            "combined": str(combined_path),
-            "activity_graphs": written_activity,
-            "summary_graphs": written_summary,
-        },
+        "counts": {"activity_graphs": int(len(bundle.activity_graphs or {})), "summary_graphs": int(len(bundle.summary_graphs or {}))},
+        "files": {"combined": str(combined_path), "activity_graphs": written_activity, "summary_graphs": written_summary},
     }
     manifest_path = out_dir / "graph_bundle_manifest.json"
     _ensure_writable(manifest_path, force)
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-# Public runner alias (stage naming)
-def run_graph_stage(
-    df_records_feat: pd.DataFrame,
-    df_summary: pd.DataFrame,
-    activity_ids: Optional[Sequence[str]] = None,
-) -> GraphBundle:
-    """
-    Stage B runner (preferred name): FeatureBundle -> GraphBundle.
-    """
-    return run_build_2(df_records_feat=df_records_feat, df_summary=df_summary, activity_ids=activity_ids)
-
-
+# -----------------------------------------------------------------------------
 # CLI
+# -----------------------------------------------------------------------------
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Feature -> Graph stage: FeatureBundle tables -> GraphBundle JSON specs"
-    )
-    p.add_argument(
-        "--input",
-        help="Path to a FeatureBundle export directory (from fit_to_feature.py --bundle-out).",
-        required=False,
-    )
-    p.add_argument(
-        "--out",
-        help="Directory to write GraphBundle JSON outputs (debug chokepoint).",
-        required=False,
-    )
-    p.add_argument(
-        "--activity-ids",
-        help="Optional comma-separated list of activity_id values to build (default: all).",
-        required=False,
-    )
+    p = argparse.ArgumentParser(description="Feature -> Graph stage: FeatureBundle tables -> GraphBundle JSON specs")
+    p.add_argument("--input", required=False, help="Path to a FeatureBundle export directory (from fit_to_feature.py --bundle-out).")
+    p.add_argument("--out", required=False, help="Directory to write GraphBundle JSON outputs (debug chokepoint).")
+    p.add_argument("--activity-ids", required=False, help="Optional comma-separated list of activity_id values to build (default: all).")
     p.add_argument("--force", action="store_true", help="Overwrite outputs if they exist.")
     return p.parse_args(argv)
 
@@ -645,7 +649,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         if out_dir is not None:
             write_graph_bundle(out_dir, graph_bundle, force=args.force)
 
-        # Always print a small in-console confirmation for quick validation
         print(f"Built GraphBundle: {len(graph_bundle.activity_graphs)} activity graph(s), {len(graph_bundle.summary_graphs)} summary graph(s)")
         if out_dir is not None:
             print(f"Wrote JSON outputs to: {out_dir}")
@@ -654,6 +657,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as e:
         print(f"[ERROR] {e}")
         import traceback
+
         traceback.print_exc()
         return 2
 

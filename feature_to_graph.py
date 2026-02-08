@@ -154,9 +154,7 @@ def _iso_week_key(dt: pd.Timestamp) -> str:
     return f"{int(iso.year):04d}-W{int(iso.week):02d}"
 
 
-# -----------------------------
 # GraphSpec builders
-# -----------------------------
 def make_graph_spec(
     graph_id: str,
     category: str,
@@ -180,9 +178,7 @@ def make_graph_spec(
     }
 
 
-# -----------------------------
 # Activity graphs (record-level)
-# -----------------------------
 def make_activity_graph(
     df_records_feat: pd.DataFrame,
     activity_id: str,
@@ -241,9 +237,7 @@ def make_activity_graphs(
     return out
 
 
-# -----------------------------
 # Summary graphs (activity-level)
-# -----------------------------
 def _get_summary_time_axis(df_summary: pd.DataFrame) -> Tuple[pd.Series, str, str]:
     """
     Return (datetime_series_utc, x_label, x_unit)
@@ -447,9 +441,7 @@ def make_summary_weekly_efficiency_graph(df_summary: pd.DataFrame) -> Dict[str, 
     )
 
 
-# -----------------------------
 # In-memory stage runner
-# -----------------------------
 def run_build_2(
     *,
     df_records_feat: pd.DataFrame,
@@ -491,9 +483,7 @@ def run_graph_stage(
     return run_build_2(df_records_feat=df_records_feat, df_summary=df_summary, activity_ids=activity_ids)
 
 
-# -----------------------------------------------------------------------------
 # Optional disk I/O (debug / validation chokepoints)
-# -----------------------------------------------------------------------------
 def _read_manifest(in_dir: Path) -> Optional[dict]:
     p = in_dir / "feature_bundle_manifest.json"
     if p.exists():
@@ -600,9 +590,7 @@ def write_graph_bundle(out_dir: Path, bundle: GraphBundle, force: bool) -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-# -----------------------------------------------------------------------------
 # CLI
-# -----------------------------------------------------------------------------
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Feature -> Graph stage: FeatureBundle tables -> GraphBundle JSON specs")
     p.add_argument("--input", required=False, help="Path to a FeatureBundle export directory (from fit_to_feature.py --bundle-out).")

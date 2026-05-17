@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Activity — Runners Dashboard{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <h1 id="activity-title">Activity</h1>
+        <div class="subtitle" id="activity-subtitle">loading…</div>
+    </div>
+
+    <div class="stat-grid" id="stat-grid">
+        <!-- populated by activity.js -->
+    </div>
+
+    <div class="chart-card">
+        <div class="chart-header">
+            <span class="chart-title">Heart Rate</span>
+            <span class="chart-meta" id="hr-meta"></span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-hr"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+        <div class="chart-header">
+            <span class="chart-title">Pace</span>
+            <span class="chart-meta" id="pace-meta"></span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-pace"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+        <div class="chart-header">
+            <span class="chart-title">Cadence</span>
+            <span class="chart-meta" id="cadence-meta"></span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-cadence"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+        <div class="chart-header">
+            <span class="chart-title">Elevation</span>
+            <span class="chart-meta" id="elevation-meta"></span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-elevation"></canvas></div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Inject the activity id from the URL into a global for activity.js
+    window.ACTIVITY_ID = "{{ activity_id }}";
+</script>
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/activity.js') }}"></script>
+{% endblock %}

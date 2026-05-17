@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Not Found — Runners Dashboard{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <h1>Activity not found</h1>
+        <div class="subtitle">activity_id: <code>{{ activity_id }}</code></div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <p style="color: var(--text-dim);">
+                This activity isn't in memory. State is in-memory only and is wiped
+                when the server restarts, so this likely means either:
+            </p>
+            <ul style="color: var(--text-dim);">
+                <li>The server was restarted since you last uploaded.</li>
+                <li>The link was shared or bookmarked from a previous session.</li>
+            </ul>
+            <p>
+                <a href="{{ url_for('index') }}" class="btn">← Back to library</a>
+            </p>
+        </div>
+    </div>
+{% endblock %}

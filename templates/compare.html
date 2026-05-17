@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Compare — Runners Dashboard{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <h1>Compare</h1>
+        <div class="subtitle" id="compare-subtitle">loading…</div>
+    </div>
+
+    <div class="card">
+        <div class="compare-controls">
+            <label>X-AXIS</label>
+            <div class="x-axis-toggle" id="x-axis-toggle">
+                <button data-axis="time" class="active">Elapsed Time</button>
+                <button data-axis="distance">Distance</button>
+                <button data-axis="percent">% of Distance</button>
+            </div>
+        </div>
+        <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="chart-card">
+        <div class="chart-header"><span class="chart-title">Heart Rate</span></div>
+        <div class="chart-wrap"><canvas id="chart-hr"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+        <div class="chart-header"><span class="chart-title">Pace</span></div>
+        <div class="chart-wrap"><canvas id="chart-pace"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+        <div class="chart-header"><span class="chart-title">Cadence</span></div>
+        <div class="chart-wrap"><canvas id="chart-cadence"></canvas></div>
+    </div>
+
+    <div class="chart-card">
+        <div class="chart-header"><span class="chart-title">Elevation</span></div>
+        <div class="chart-wrap"><canvas id="chart-elevation"></canvas></div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/compare.js') }}"></script>
+{% endblock %}

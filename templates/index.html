@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Library — Runners Dashboard{% endblock %}
+
+{% block content %}
+    <div class="page-header">
+        <h1>Library</h1>
+        <div class="subtitle">drop .fit files to parse · select 2+ to compare</div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h2>Upload</h2>
+        </div>
+        <div class="card-body">
+            <label class="dropzone" id="dropzone">
+                <div class="dropzone-icon">+</div>
+                <div class="dropzone-title">Drop .fit files here or click to browse</div>
+                <div class="dropzone-hint">multiple files supported · 16 MB max each</div>
+                <input type="file" id="file-input" multiple accept=".fit" />
+            </label>
+            <div class="upload-results" id="upload-results"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h2>Activities</h2>
+        </div>
+        <div class="toolbar">
+            <span class="count" id="activity-count">0 activities</span>
+            <span class="spacer"></span>
+            <button class="btn btn-small btn-danger" id="clear-btn">Clear all</button>
+        </div>
+        <div id="library-body">
+            <div class="loading">Loading…</div>
+        </div>
+    </div>
+
+    <div class="compare-bar" id="compare-bar">
+        <span class="count"><strong id="selected-count">0</strong> selected</span>
+        <button class="btn btn-small" id="compare-clear">Clear</button>
+        <button class="btn btn-primary btn-small" id="compare-go" disabled>Compare →</button>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/upload.js') }}"></script>
+<script src="{{ url_for('static', filename='js/library.js') }}"></script>
+{% endblock %}

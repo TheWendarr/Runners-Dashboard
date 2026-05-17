@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Runners Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+    {% block head_extra %}{% endblock %}
+</head>
+<body>
+    <nav class="topbar">
+        <a href="{{ url_for('index') }}" class="brand">
+            runners-dashboard <span class="ver">v0.1</span>
+        </a>
+        <div class="nav-links">
+            <a href="{{ url_for('index') }}"
+               class="{% if request.endpoint == 'index' %}active{% endif %}">Library</a>
+            <div class="unit-toggle" id="unit-toggle" title="Toggle display units">
+                <button data-units="imperial">IMP</button>
+                <button data-units="metric">MET</button>
+            </div>
+        </div>
+    </nav>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    <script src="{{ url_for('static', filename='js/chart.umd.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/units.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
